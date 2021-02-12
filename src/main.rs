@@ -30,8 +30,19 @@ struct Cli {
     url: String,
 }
 
+#[derive(Debug)]
+enum GeminiError {
+    UrlError,
+    CertificateMissingError,
+    CertificateInvalidError,
+    StreamReadError,
+    StreamWriteError,
+    SslError,
+    ConnectionError,
+}
+
 fn write_cert_to_file(path: &Path, cert: X509) -> io::Result<()> {
-    let mut file = File::create(path).unwrap();
+    let mut file = File::create(path)?;
     file.write_all(&cert.to_pem()?)?;
     Ok(())
 }
@@ -44,7 +55,7 @@ fn read_cert_from_file(path: &Path) -> io::Result<X509> {
 }
 
 fn hex_fingerprint(cert: X509) -> String {
-    let fingerprint = cert.digest(MessageDigest::md5()).unwrap();
+    let fingerprint = cert.digest(MessageDigest::md5());
     let mut hex = String::new();
 
     for (pos, a) in fingerprint.iter().enumerate() {
@@ -79,31 +90,56 @@ fn verify_cert(hostname: String, cert: X509) -> io::Result<bool> {
     Ok(existing_cert_fingerprint == current_cert_fingerprint)
 }
 
-fn gemini_request(url: Url) {
-    let host = url.host_str().unwrap();
+fn gemini_request(url: Url) -> Result<String, GeminiError> {
+    let host = url.host_str().ok_or(GeminiError::UrlError)?;
     let connect_str = host.to_owned() + ":1965";
 
-    let connector = SslConnector::builder(SslMethod::tls()).unwrap().build();
-    let mut ssl_conf = connector.configure().unwrap();
+    let mut ssl_conf = SslConnector::builder(SslMethod::tls())
+        .map_err(|_| GeminiError::SslError)?
+        .build()
+        .configure()
+        .map_err(|_| GeminiError::SslError)?;
+
     ssl_conf.set_verify(SslVerifyMode::NONE);
-    let stream = TcpStream::connect(connect_str).unwrap();
-    let mut stream = ssl_conf.connect(host, stream).unwrap();
-    let cert = stream.ssl().peer_certificate().unwrap();
-    let verified = verify_cert(host.to_owned(), cert).unwrap();
+
+    let stream = TcpStream::connect(connect_str).map_err(|_| GeminiError::ConnectionError)?;
+
+    let mut stream = ssl_conf
+        .connect(host, stream)
+        .map_err(|_| GeminiError::ConnectionError)?;
+
+    let cert = stream
+        .ssl()
+        .peer_certificate()
+        .ok_or(GeminiError::CertificateMissingError)?;
+
+    let verified =
+        verify_cert(host.to_owned(), cert).map_err(|_| GeminiError::CertificateInvalidError)?;
 
     if !verified {
         println!("WARNING: certificate not verified");
     }
 
     let request = url.into_string() + "\r\n";
-    stream.write_all(&request.into_bytes()[..]).unwrap();
+
+    stream
+        .write_all(&request.into_bytes()[..])
+        .map_err(|_| GeminiError::StreamWriteError)?;
+
     let mut res = vec![];
-    stream.read_to_end(&mut res).unwrap();
-    println!("{}", String::from_utf8_lossy(&res));
+    stream
+        .read_to_end(&mut res)
+        .map_err(|_| GeminiError::StreamReadError)?;
+    Ok(String::from_utf8_lossy(&res).to_string())
 }
 
 fn main() {
     let args = Cli::from_args();
-    let url = Url::parse(&args.url).unwrap();
-    gemini_request(url);
+    match Url::parse(&args.url) {
+        Ok(url) => match gemini_request(url) {
+            Ok(result) => println!("{}", result),
+            Err(e) => println!("{:?}", e),
+        },
+        Err(_) => println!("Unable to parse URL"),
+    }
 }
