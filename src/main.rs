@@ -21,12 +21,15 @@ use std::io;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
+use std::path::PathBuf;
 use structopt::StructOpt;
 use url::Url;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "gemini", about = "A simple gemini client")]
 struct Cli {
+    #[structopt(short = "c", long = "certificates", default_value = "certs")]
+    certificate_directory: PathBuf,
     url: String,
 }
 
@@ -68,14 +71,8 @@ fn hex_fingerprint(cert: X509) -> String {
     return hex;
 }
 
-// TODO: make this configurable via envvar and cli flag
-fn get_cert_dir_path() -> String {
-    String::from("certs")
-}
-
-fn verify_cert(hostname: String, cert: X509) -> io::Result<bool> {
-    let certs_path = get_cert_dir_path();
-    let cert_path = Path::new(&certs_path).join(&hostname);
+fn verify_cert(args: Cli, hostname: String, cert: X509) -> io::Result<bool> {
+    let cert_path = args.certificate_directory.join(&hostname);
 
     if !cert_path.exists() {
         // save and exit
@@ -90,7 +87,7 @@ fn verify_cert(hostname: String, cert: X509) -> io::Result<bool> {
     Ok(existing_cert_fingerprint == current_cert_fingerprint)
 }
 
-fn gemini_request(url: Url) -> Result<String, GeminiError> {
+fn gemini_request(args: Cli, url: Url) -> Result<String, GeminiError> {
     let host = url.host_str().ok_or(GeminiError::UrlError)?;
     let connect_str = host.to_owned() + ":1965";
 
@@ -113,8 +110,8 @@ fn gemini_request(url: Url) -> Result<String, GeminiError> {
         .peer_certificate()
         .ok_or(GeminiError::CertificateMissingError)?;
 
-    let verified =
-        verify_cert(host.to_owned(), cert).map_err(|_| GeminiError::CertificateInvalidError)?;
+    let verified = verify_cert(args, host.to_owned(), cert)
+        .map_err(|_| GeminiError::CertificateInvalidError)?;
 
     if !verified {
         println!("WARNING: certificate not verified");
@@ -136,7 +133,7 @@ fn gemini_request(url: Url) -> Result<String, GeminiError> {
 fn main() {
     let args = Cli::from_args();
     match Url::parse(&args.url) {
-        Ok(url) => match gemini_request(url) {
+        Ok(url) => match gemini_request(args, url) {
             Ok(result) => println!("{}", result),
             Err(e) => println!("{:?}", e),
         },
