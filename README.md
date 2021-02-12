@@ -11,9 +11,25 @@ $ cargo build --release
 $ ./target/release/gemini gemini://gemini.circumlunar.space/
 ```
 
-## certificates
+Options:
 
-TLS certificates are stored in a dir `certs` relative to `pwd`
+```
+gemini 0.2.0
+A simple gemini client
+
+USAGE:
+    gemini [OPTIONS] <url>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -c, --certificates <certificate-directory>     [default: certs]
+
+ARGS:
+    <url>
+```
 
 ## license
 
